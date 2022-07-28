@@ -179,6 +179,10 @@ interface UploadResult {
     //
     // * code: The HTTP status code
     HttpStatus(i32 code);
+
+    // Signal that this uploader is done with work
+    // and doesn't accept new work.
+    Done(i8 unused);
 };
 
 // The supported metrics' lifetimes.

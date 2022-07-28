@@ -32,6 +32,14 @@ pub enum UploadResult {
         /// The HTTP status code
         code: i32,
     },
+
+    /// Signal that this uploader is done with work
+    /// and doesn't accept new work.
+    Done {
+        #[doc(hidden)]
+        /// Unused field. Required because UniFFI can't handle variants without fields.
+        unused: i8,
+    },
 }
 
 impl UploadResult {
@@ -47,6 +55,7 @@ impl UploadResult {
             UploadResult::HttpStatus { .. } => Some("status_code_unknown"),
             UploadResult::UnrecoverableFailure { .. } => Some("unrecoverable"),
             UploadResult::RecoverableFailure { .. } => Some("recoverable"),
+            UploadResult::Done { .. } => None,
         }
     }
 
@@ -71,5 +80,10 @@ impl UploadResult {
     /// This can still indicate an error, depending on the status code.
     pub fn http_status(code: i32) -> Self {
         Self::HttpStatus { code }
+    }
+
+    /// This uploader is done.
+    pub fn done() -> Self {
+        Self::Done { unused: 0 }
     }
 }

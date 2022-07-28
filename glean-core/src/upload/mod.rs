@@ -688,6 +688,10 @@ impl PingUploadManager {
                 self.recoverable_failure_count
                     .fetch_add(1, Ordering::SeqCst);
             }
+
+            Done { .. } => {
+                log::warn!("Received Done when expecting an upload result. This should be handled one layer up.");
+            }
         };
     }
 }

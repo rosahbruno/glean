@@ -87,6 +87,7 @@ impl UploadManager {
         thread::Builder::new()
             .name("glean.upload".into())
             .spawn(move || {
+                log::trace!("Started glean.upload thread");
                 loop {
                     let incoming_task = glean_core::glean_get_upload_task();
 
@@ -97,21 +98,35 @@ impl UploadManager {
                             let upload_url = format!("{}{}", inner.server_endpoint, request.path);
                             let headers: Vec<(String, String)> =
                                 request.headers.into_iter().collect();
-                            let result = inner.uploader.upload(upload_url, request.body, headers);
+                            let result =
+                                match inner.uploader.upload(upload_url, request.body, headers) {
+                                    UploadResult::Done { .. } => {
+                                        log::debug!("Uploader signaled Done. Exiting.");
+                                        // Uploader signaled that it cannot upload more.
+                                        // We break out of the loop here.
+                                        // The ping upload request will be re-issued the next time.
+                                        break;
+                                    }
+                                    res => res,
+                                };
                             // Process the upload response.
                             glean_core::glean_process_ping_upload_response(doc_id, result);
                         }
                         PingUploadTask::Wait { time } => {
+                            log::trace!("Instructed to wait for {:?}ms", time);
                             thread::sleep(Duration::from_millis(time));
                         }
                         PingUploadTask::Done { .. } => {
-                            // Nothing to do here, break out of the loop and clear the
-                            // running flag.
-                            inner.thread_running.store(false, Ordering::SeqCst);
-                            return;
+                            log::trace!("Received PingUploadTask::Done. Exiting.");
+                            // Nothing to do here, break out of the loop.
+                            break;
                         }
                     }
                 }
+
+                // Clear the running flag to signal that this thread is done.
+                inner.thread_running.store(false, Ordering::SeqCst);
+                return;
             })
             .expect("Failed to spawn Glean's uploader thread");
     }

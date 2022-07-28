@@ -2,6 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::sync::{Arc, Mutex};
+use std::thread::{self, ThreadId};
+use std::time::Duration;
+
 use crate::private::PingType;
 use crate::private::{BooleanMetric, CounterMetric, EventMetric, StringMetric};
 
@@ -1130,4 +1134,74 @@ fn test_boolean_get_num_errors() {
     let result = metric.test_get_num_recorded_errors(ErrorType::InvalidLabel);
 
     assert_eq!(result, 0);
+}
+
+#[test]
+fn signaling_done() {
+    let _lock = lock_test();
+
+    const UPLOAD_WAIT_TIME: u64 = 50;
+
+    // Define a fake uploader that reports back the submission URL
+    // using a crossbeam channel.
+    #[derive(Debug)]
+    pub struct FakeUploader {
+        counter: Arc<Mutex<HashMap<ThreadId, u32>>>,
+    }
+    impl net::PingUploader for FakeUploader {
+        fn upload(
+            &self,
+            _url: String,
+            _body: Vec<u8>,
+            _headers: Vec<(String, String)>,
+        ) -> net::UploadResult {
+            let mut map = self.counter.lock().unwrap();
+            *map.entry(thread::current().id()).or_insert(0) += 1;
+            // Some artifical "work" to ensure we can queue multiple pings.
+            thread::sleep(Duration::from_millis(UPLOAD_WAIT_TIME));
+
+            // Signal that this uploader thread is done.
+            net::UploadResult::done()
+        }
+    }
+
+    // Create a custom configuration to use a fake uploader.
+    let dir = tempfile::tempdir().unwrap();
+    let tmpname = dir.path().to_path_buf();
+
+    let call_count = Arc::new(Mutex::default());
+
+    let cfg = Configuration {
+        data_path: tmpname,
+        application_id: GLOBAL_APPLICATION_ID.into(),
+        upload_enabled: true,
+        max_events: None,
+        delay_ping_lifetime_io: false,
+        server_endpoint: Some("invalid-test-host".into()),
+        uploader: Some(Box::new(FakeUploader {
+            counter: Arc::clone(&call_count),
+        })),
+        use_core_mps: false,
+    };
+
+    let _t = new_glean(Some(cfg), true);
+
+    // Define a new ping and submit it.
+    const PING_NAME: &str = "test-ping";
+    let custom_ping = private::PingType::new(PING_NAME, true, true, vec![]);
+    custom_ping.submit(None);
+    custom_ping.submit(None);
+
+    // Give it time to spin down.
+    thread::sleep(Duration::from_millis(UPLOAD_WAIT_TIME * 2));
+
+    // Submit another ping and wait for it to do work.
+    custom_ping.submit(None);
+    thread::sleep(Duration::from_millis(UPLOAD_WAIT_TIME * 2));
+
+    let map = call_count.lock().unwrap();
+    assert_eq!(2, map.len(), "should have launched 2 uploader threads");
+    for (_tid, &count) in &*map {
+        assert_eq!(1, count, "each thread should call upload only once");
+    }
 }
