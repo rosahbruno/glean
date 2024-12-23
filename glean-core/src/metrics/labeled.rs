@@ -13,6 +13,7 @@ use crate::metrics::{
     BooleanMetric, CounterMetric, CustomDistributionMetric, MemoryDistributionMetric, MemoryUnit,
     Metric, MetricType, QuantityMetric, StringMetric, TimeUnit, TimingDistributionMetric,
 };
+use crate::storage::StorageManager;
 use crate::Glean;
 
 const MAX_LABELS: usize = 16;
@@ -299,6 +300,45 @@ where
                 metric
             }
         }
+    }
+
+    /// **Test-only API (exported for FFI purposes).**
+    ///
+    /// Gets the currently stored value as a string.
+    ///
+    /// This doesn't clear the stored value.
+    // #[doc(hidden)]
+    pub fn get_value_as_str(&self, glean: &Glean, ping_name: Option<&str>) -> Option<String> {
+        let queried_ping_name = ping_name.unwrap_or_else(|| &self.submetric.meta().inner.send_in_pings[0]);
+
+        match StorageManager.snapshot_metric_for_test(
+            glean.storage(),
+            queried_ping_name,
+            &self.submetric.meta().base_identifier(),
+            self.submetric.meta().inner.lifetime
+        ) {
+            Some(v) => Some(v.as_json().to_string()),
+            _ => None,
+        }
+    }
+
+    /// **Test-only API (exported for FFI purposes).**
+    ///
+    /// Gets the currently stored values.
+    ///
+    /// This doesn't clear the stored values.
+    ///
+    /// # Arguments
+    ///
+    /// * `ping_name` - the optional name of the ping to retrieve the metric
+    ///                 for. Defaults to the first value in `send_in_pings`.
+    ///
+    /// # Returns
+    ///
+    /// The stored value or `None` if nothing stored.
+    pub fn test_get_value_as_str(&self, ping_name: Option<String>) -> Option<String> {
+        crate::block_on_dispatcher();
+        crate::core::with_glean(|glean| self.get_value_as_str(glean, ping_name.as_deref()))
     }
 
     /// **Exported for test purposes.**
